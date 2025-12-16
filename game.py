@@ -4,6 +4,7 @@ from enum import Enum
 from collections import namedtuple
 import numpy as np
 import math
+import time
 
 pygame.init()
 font = pygame.font.Font('arial.ttf', 25)
@@ -24,41 +25,131 @@ BLUE1 = (0, 0, 255)
 BLUE2 = (0, 100, 255)
 BLACK = (0,0,0)
 
-BLOCK_SIZE = 20
-SPEED = 1000
+BLOCK_SIZE = 40
+SPEED = 100
 
 class SnakeGameAI:
-    def __init__(self, w=640, h=640):
+    def __init__(self, w=200, h=200):
+        # Constants
         self.w = w
         self.h = h
+        self.max_x = int(self.w//BLOCK_SIZE)
+        self.max_y = int(self.h//BLOCK_SIZE)
+
+        # Params
+        self.c = 3 # Distance change reward
+        self.local_size = 5 # Size of local map (y, x)
+        self.local_half = self.local_size // 2 if self.local_size % 2 == 1 else self.local_size // 2 - 1
+
         # init display
         self.display = pygame.display.set_mode((self.w, self.h))
         pygame.display.set_caption('Snake')
         self.clock = pygame.time.Clock()
         self.max_dist = math.hypot((self.w // BLOCK_SIZE)-1, (self.h // BLOCK_SIZE)-1)
-        self.c = 5
-        self.reset()
         
-    def retrieve_map(self):
-        map = np.zeros((2, self.h//BLOCK_SIZE, self.w//BLOCK_SIZE), dtype='I')
+        # Begin snake
+        self.reset()
 
-        snake_indices = []
-        for point in self.snake:
-            snake_indices.append((int(point[0]//BLOCK_SIZE), int(point[1]//BLOCK_SIZE)))
+    def get_height(self):
+        return self.local_size
+    
+    def get_width(self):
+        return self.local_size
 
-        for pos in snake_indices:
-            map[0, pos[1]-1, pos[0]-1] = 1
+    def retrieve_local_map(self):
+        local_map = np.zeros((self.local_size, self.local_size), dtype=np.int8)
 
-        map[1, int(self.food[0]//BLOCK_SIZE)-1, int(self.food[1]//BLOCK_SIZE)-1] = 1 # Food
-        map[1, int(self.head[0]//BLOCK_SIZE)-1, int(self.head[1]//BLOCK_SIZE)-1] = 1 # Head
+        # Draw head
+        local_map[self.local_half, self.local_half] = 1
+        
+        # Get head coordinates
+        head_x, head_y = int(self.head[0]//BLOCK_SIZE), int(self.head[1]//BLOCK_SIZE)
 
-        return map
+        # Draw body
+        for snake_body in self.snake[1:]:
+            # Get body x and y
+            x, y = int(snake_body[0]//BLOCK_SIZE), int(snake_body[1]//BLOCK_SIZE)
+
+            # Get distance from head
+            dx = head_x - x 
+            dy = head_y - y
+
+            # Check if outside local area
+            if abs(dx) <= self.local_half and abs(dy) <= self.local_half:
+                # Get local body indices
+                local_x = self.local_half - dx 
+                local_y = self.local_half - dy
+
+                # Draw body
+                local_map[local_y, local_x] = 1
+
+        # Draw walls
+        dx_wall_right = self.max_x - head_x
+        dy_wall_bottom = self.max_y - head_y 
+
+        # Draw x walls
+        if abs(dx_wall_right) <= self.local_half:
+            if abs(dy_wall_bottom) <= self.local_half:
+                # Bottom right 
+                local_map[:self.local_half+dy_wall_bottom, self.local_half+dx_wall_right] = 1
+                local_map[self.local_half+dy_wall_bottom, :self.local_half+dx_wall_right+1] = 1
+
+            elif head_y <= self.local_half: 
+                # Top right
+                local_map[self.local_half-head_y-1:, self.local_half+dx_wall_right] = 1
+                local_map[self.local_half-head_y-1, :self.local_half+dx_wall_right] = 1
+
+            else:
+                # Only right 
+                local_map[:, self.local_half+dx_wall_right:] = 1
+
+        if head_x <= self.local_half:
+            if abs(dy_wall_bottom) <= self.local_half:
+                # Bottom left
+                local_map[:self.local_half+dy_wall_bottom, self.local_half-head_x-1] = 1
+                local_map[self.local_half+dy_wall_bottom, self.local_half-head_x-1:] = 1
+                
+            elif head_y <= self.local_half:
+                # Top left
+                local_map[self.local_half-head_y-1:, self.local_half-head_x-1] = 1
+                local_map[self.local_half-head_y-1, self.local_half-head_x-1:] = 1
+
+            else:
+                # Only left
+                local_map[:, self.local_half-head_x-1:] = 1
+
+        if abs(dy_wall_bottom) <= self.local_half and not (
+            abs(dx_wall_right) <= self.local_half or
+            head_x <= self.local_half
+            ):
+            # Draw walls below
+            local_map[self.local_half+dy_wall_bottom:, :] = 1
+        
+        if head_y <= self.local_half and not (
+            abs(dx_wall_right) <= self.local_half or
+            head_x <= self.local_half
+            ):
+            # Draw walls above
+            local_map[:self.local_half-head_y-1, :] = 1
+
+        # Draw food
+        x_food, y_food = int(self.food[0]//BLOCK_SIZE), int(self.food[1]//BLOCK_SIZE)
+        dx_food = head_x - x_food
+        dy_food = head_y - y_food
+
+        if abs(dx_food) <= self.local_half and abs(dy_food) <= self.local_half:
+            local_x = self.local_half - dx_food
+            local_y = self.local_half - dy_food 
+
+            local_map[local_y, local_x] = -1
+
+        return local_map
 
     def reset(self):
         # init game state
         self.direction = Direction.RIGHT
-        
-        self.head = Point(self.w/2, self.h/2)
+
+        self.head = Point(BLOCK_SIZE*2, BLOCK_SIZE*2)
         self.snake = [self.head, 
                       Point(self.head.x-BLOCK_SIZE, self.head.y),
                       Point(self.head.x-(2*BLOCK_SIZE), self.head.y)]
@@ -72,7 +163,7 @@ class SnakeGameAI:
             (self.head.x/BLOCK_SIZE - self.food.x/BLOCK_SIZE),
             (self.head.y/BLOCK_SIZE - self.food.y/BLOCK_SIZE)
         )
-        
+
     def _place_food(self):
         x = random.randint(0, (self.w-BLOCK_SIZE )//BLOCK_SIZE )*BLOCK_SIZE 
         y = random.randint(0, (self.h-BLOCK_SIZE )//BLOCK_SIZE )*BLOCK_SIZE
@@ -97,30 +188,30 @@ class SnakeGameAI:
         # 3. check if game over
         reward = 0
         game_over = False
-        if self.is_collision() or self.frame_iteration > 200*len(self.snake):
+        if self.is_collision() or self.frame_iteration > 500*len(self.snake):
             game_over = True
-            reward = -1
+            reward = -50
             return reward, game_over, self.score
             
         # 4. place new food or just move
         ate = False
         if self.head == self.food:
             self.score += 1
-            reward = 1
+            reward = 100
             self.without_food_frame = 0
             ate = True
             self._place_food()
         else:
             self.snake.pop()
-            reward = -0.10
+            reward = -2
         
         new_dist = math.sqrt((self.head[0]/BLOCK_SIZE - self.food[0]/BLOCK_SIZE)**2 +
                   (self.head[1]/BLOCK_SIZE - self.food[1]/BLOCK_SIZE)**2)
         
 
         dist_change = (self.prev_dist - new_dist) / self.max_dist
-        if not ate:
-            reward += dist_change * self.c
+        #if not ate:
+        #    reward += dist_change * self.c
         self.prev_dist = new_dist
 
         # 5. update ui and clock
@@ -145,8 +236,8 @@ class SnakeGameAI:
         self.display.fill(BLACK)
         
         for pt in self.snake:
-            pygame.draw.rect(self.display, BLUE1, pygame.Rect(pt.x, pt.y, BLOCK_SIZE, BLOCK_SIZE))
-            pygame.draw.rect(self.display, BLUE2, pygame.Rect(pt.x+4, pt.y+4, 12, 12))
+            #pygame.draw.rect(self.display, BLUE1, pygame.Rect(pt.x, pt.y, BLOCK_SIZE, BLOCK_SIZE))
+            pygame.draw.rect(self.display, BLUE2, pygame.Rect(pt.x, pt.y, BLOCK_SIZE, BLOCK_SIZE))
             
         pygame.draw.rect(self.display, RED, pygame.Rect(self.food.x, self.food.y, BLOCK_SIZE, BLOCK_SIZE))
         

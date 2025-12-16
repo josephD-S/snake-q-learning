@@ -5,12 +5,15 @@ import os
 import numpy as np
 
 class Linear_QNet(nn.Module):
-    def __init__(self, hidden_size, output_size):
+    def __init__(self, height, width, hidden_size, output_size):
         super().__init__()
         self.layers = nn.Sequential(
-                                    nn.Linear(2052, hidden_size),
+                                    nn.Linear(height * width + 8, hidden_size),
+                                    nn.ReLU(),
                                     nn.Linear(hidden_size, hidden_size//2),
+                                    nn.ReLU(),
                                     nn.Linear(hidden_size//2, hidden_size//4),
+                                    nn.ReLU(),
                                     nn.Linear(hidden_size//4, output_size)
         )
 

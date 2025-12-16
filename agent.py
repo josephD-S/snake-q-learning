@@ -5,22 +5,27 @@ from game import SnakeGameAI, Direction, Point
 from collections import deque
 from model import Linear_QNet, QTrainer
 from helper import plot
+import time
 
 MAX_MEMORY = 100_000
 BATCH_SIZE = 1000
-LR = 0.0001
+LR = 0.001
 
 class Agent:
-    def __init__(self):
+    def __init__(self, height, width):
         self.n_games = 0
-        self.epsilon = 0 # Randomness param
+        self.epsilon_start = 1.0 # Randomness param, initial epsilon
+        self.epsilon = self.epsilon_start
+        self.min_epsilon = 0.01 # Ensure there's always some randomness
+        self.decay_step = 0.0005
         self.gamma = 0.95 # Discount rate
         self.memory = deque(maxlen=MAX_MEMORY) # pops as len approaches MAX_MEMORY
-        self.model = Linear_QNet(1024, 3) 
+        self.model = Linear_QNet(height, width, 128, 3) 
         self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
 
     def get_state(self, game):
-        map = game.retrieve_map()
+        map = game.retrieve_local_map()
+
         map = map.flatten()
 
         direction = [
@@ -30,9 +35,17 @@ class Agent:
             game.direction == Direction.DOWN
         ]
 
-        direction = np.array(direction, dtype=int)
+        food_direction = [
+            game.food[0] < game.head[0],    # Left
+            game.food[0] > game.head[0],    # Right
+            game.food[1] < game.head[1],    # Up
+            game.food[1] > game.head[1]     # Down 
+        ]
 
-        state = np.concatenate((map, direction))
+        direction = np.array(direction, dtype=int)
+        food_direction = np.array(food_direction, dtype=int)
+
+        state = np.concatenate((map, direction, food_direction))
 
         return state
 
@@ -56,10 +69,11 @@ class Agent:
 
     def get_action(self, state):
         # In the beginning, we want random moves to do more exploration than exploitation, i.e. exploration / exploitation tradeoff
-        self.epsilon = 500 - self.n_games
+        random_probability = max(self.min_epsilon, self.epsilon)
+
         final_move = [0, 0, 0]
         # Pick a random move
-        if random.randint(0, 500) < self.epsilon:
+        if random.random() < random_probability:
             move = random.randint(0, 2)
             final_move[move] = 1
         else:
@@ -76,8 +90,8 @@ def train():
     plot_q_values = []
     total_score = 0
     record = 0
-    agent = Agent()
     game = SnakeGameAI()
+    agent = Agent(game.get_height(), game.get_width())
     while True:
         # Get current state
         state_old = agent.get_state(game)
@@ -114,6 +128,7 @@ def train():
             plot_q_values.append(max_q_value)
             plot(plot_scores, plot_mean_scores, plot_q_values)
 
+            agent.epsilon = max(agent.min_epsilon, agent.epsilon_start - agent.n_games * agent.decay_step)
 
 
 if __name__ == "__main__":
